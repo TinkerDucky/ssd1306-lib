@@ -40,43 +40,107 @@ static const uint8_t init_cmds[] = {
     COMMANDS::SET_DISPLAY_ON,
 };
 
-template <uint8_t WIDTH, uint8_t HEIGHT, uint8_t PPR,
+template <uint8_t WIDTH, uint8_t HEIGHT, uint8_t PPB,
           int (*i2c_write)(const char* buf, uint32_t len)>
 class SSD1306 {
  private:
-  uint8_t framebuffer[(WIDTH * HEIGHT) / PPR];
+  uint8_t framebuffer[(WIDTH * HEIGHT) / PPB];
+  uint8_t current_page, current_column;
 
-  void command(const char command) {
+  uint8_t command(const uint8_t command) {
     char buf[2] = {CONTROL_BYTE_COMMANDS::SEND_SINGLE_CMD, command};
-    i2c_write(buf, 2);
+    return i2c_write(buf, 2);
   }
 
-  void commandLine(const uint8_t* command_buf, uint8_t len) {
+  uint8_t commandLine(const uint8_t* command_buf, uint8_t len) {
     char buf[len] = {CONTROL_BYTE_COMMANDS::SEND_MULTIPLE_CMDS};
     memcpy(buf + 1, command_buf, len);
-    i2c_write(buf, len + 1);
+    return i2c_write(buf, len + 1);
+  }
+
+  uint8_t data(const uint8_t data) {
+    char buf[2] = {CONTROL_BYTE_COMMANDS::SEND_SINGLE_DATA, data};
+    return i2c_write(buf, 2);
+  }
+
+  uint8_t multipleData(const uint8_t* data_buf, uint8_t len) {
+    char buf[len] = {CONTROL_BYTE_COMMANDS::SEND_MULTIPLE_DATA};
+    memcpy(buf + 1, data_buf, len);
+    return i2c_write(buf, len + 1);
   }
 
  public:
-  SSD1306() : framebuffer{0} {}
+  SSD1306() : framebuffer{0}, current_page(0), current_column(0) {}
 
   void init() { this->commandLine(init_cmds, sizeof(init_cmds)); }
 
   void showDisplay() {
-    char buf_out[(WIDTH * HEIGHT) / PPR + 1] = {
+    char buf_out[(WIDTH * HEIGHT) / PPB + 1] = {
         CONTROL_BYTE_COMMANDS::SEND_MULTIPLE_DATA};
-    memcpy(buf_out + 1, this->framebuffer, (WIDTH * HEIGHT) / PPR);
+
+    if (this->current_column != 0 || this->current_page != 0) {
+      this->setPosition(0, 0);
+    }
+
+    memcpy(buf_out + 1, this->framebuffer, (WIDTH * HEIGHT) / PPB);
     i2c_write(buf_out, sizeof(buf_out));
+
+    if (this->current_column != 0 || this->current_page != 0) {
+      this->setPosition(this->current_page, this->current_column);
+    }
+  }
+
+  void setPosition(uint8_t page, uint8_t column) {
+    const uint8_t cmds[] = {
+        COMMANDS::SET_PAGE_ADDR_CONTROL,
+        page &
+            ((HEIGHT / PPB) - 1),  // page start address = page % (height/ppb)
+        0x07,                      // page end address = 7;
+        COMMANDS::SET_COLUMN_ADDR,
+        column & (WIDTH - 1),  // column start address = column % width
+        0x7F,                  // column end address = 127
+    };
+
+    if (this->commandLine(cmds, sizeof(cmds)) == 0) {
+      this->current_page = cmds[1];
+      this->current_column = cmds[4];
+    }
+  }
+
+  void setAndShowByteAtCurrentPosition(const uint8_t data) {
+    if (this->data(data) != 0) return;
+
+    this->framebuffer[this->current_column + (this->current_page * WIDTH)] =
+        data;
+
+    this->current_column = (++this->current_column) & (WIDTH - 1);
+    this->current_page = (this->current_column != 0)
+                             ? this->current_page
+                             : (this->current_page + 1) & ((HEIGHT / PPB) - 1);
+  }
+
+  void setAndShowBytesFromCurrentPosition(const uint8_t* data_buf,
+                                          uint8_t len) {
+    if (this->multipleData(data_buf, len) != 0) return;
+
+    memcpy((this->framebuffer + this->current_column +
+            (this->current_page * WIDTH)),
+           data_buf, len);
+
+    this->current_page =
+        (this->current_page + (this->current_column + len) / WIDTH) &
+        ((HEIGHT / PPB) - 1);
+    this->current_column = (this->current_column + len) & (WIDTH - 1);
   }
 
   void setPixel(uint8_t pos_x, uint8_t pos_y, uint8_t value) {
     if (pos_x >= WIDTH) return;
     if (pos_y >= HEIGHT) return;
 
-    this->framebuffer[pos_x + (pos_y / PPR) * WIDTH] =
-        (this->framebuffer[pos_x + (pos_y / PPR) * WIDTH] &
-         ~(1 << pos_y % PPR)) |
-        (value << pos_y % PPR);
+    this->framebuffer[pos_x + (pos_y / PPB) * WIDTH] =
+        (this->framebuffer[pos_x + (pos_y / PPB) * WIDTH] &
+         ~(1 << pos_y % PPB)) |
+        (value << pos_y % PPB);
   }
 
   void clearDisplay() {
@@ -87,11 +151,11 @@ class SSD1306 {
   }
 
   void showTestGrid() {
-    for (uint16_t i = 0; i < sizeof(this->framebuffer) * PPR; i++) {
-      this->framebuffer[(i / PPR)] =
-          (i % 2 && (i / PPR) % 2)
-              ? this->framebuffer[i / PPR] & ~(1 << (i % PPR))
-              : this->framebuffer[i / PPR] | 1 << (i % PPR);
+    for (uint16_t i = 0; i < sizeof(this->framebuffer) * PPB; i++) {
+      this->framebuffer[(i / PPB)] =
+          (i % 2 && (i / PPB) % 2)
+              ? this->framebuffer[i / PPB] & ~(1 << (i % PPB))
+              : this->framebuffer[i / PPB] | 1 << (i % PPB);
     }
     this->showDisplay();
   }
