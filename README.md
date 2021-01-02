@@ -10,7 +10,7 @@ Currently the lib can be used by including ```ssd1306.h``` and creating a variab
 
 ```cpp
 #include <bcm2835.h>
-const uint8_t ADDR = 0x3C;
+const uint8_t ADDR = 0x3D;
 const uint8_t WIDTH = 128;
 const uint8_t HEIGHT = 64;
 const uint8_t PIXEL_PER_ROW = 8;
